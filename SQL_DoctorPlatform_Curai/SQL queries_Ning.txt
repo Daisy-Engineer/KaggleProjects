@@ -1,0 +1,90 @@
+Question 1：
+Part1：
+SELECT DISTINCT user_id AS unique_user,
+       COUNT(DISTINCT encounter_id) AS unique_encounter       
+FROM `curai-patientidverify.aa.id_verification`
+GROUP BY user_id
+ORDER BY unique_encounter DESC
+
+Part 2:
+SELECT COUNT(DISTINCT encounter_id) AS unique_encounter
+FROM `curai-patientidverify.aa.doctor_enters`
+
+Part 3:
+SELECT COUNT(DISTINCT encounter_id) AS unique_encounter
+FROM `curai-patientidverify.aa.first_patient_response`
+
+Question 2：
+WITH t as 
+(SELECT * FROM 
+      (SELECT DISTINCT encounter_id, user_id, min(starts_at) as starts_at, max(ends_at) as ends_at, platform, 
+             min(saw_verification_timestamp) as saw_verification_timestamp_min, max(start_veritifcation_timestamp) as start_veritifcation_timestamp_max, 
+             max(confirmed_selfie_timestamp) as confirmed_selfie_timestamp_max, max(verification_confirmed_timestamp) as verification_confirmed_timestamp_max
+      FROM `curai-patientidverify.aa.id_verification`
+      WHERE encounter_id <> 'Encounter:144711' AND encounter_id <> 'Encounter:145059' AND encounter_id <> 'Encounter:150532' AND encounter_id <> 'Encounter:150831'
+      GROUP BY encounter_id, user_id, platform
+      ORDER BY encounter_id) AS t1
+LEFT JOIN `curai-patientidverify.aa.doctor_enters` AS t2 ON t1.encounter_id = t2.encounter_id
+LEFT JOIN `curai-patientidverify.aa.first_patient_response` AS t3 on t1.encounter_id = t3.encounter_id)
+
+SELECT ROUND(SUM(IF(t.start_veritifcation_timestamp_max IS NULL,1,0))/SUM(IF(t.saw_verification_timestamp_min IS NOT NULL, 1,0)),2) AS dfrate_StartVeri_SawVeri, 
+       ROUND(SUM(IF(t.confirmed_selfie_timestamp_max IS NULL AND t.start_veritifcation_timestamp_max IS NOT NULL,1,0))/SUM(IF(t.start_veritifcation_timestamp_max IS NOT NULL, 1,0)),2) AS dfrate_ConfirmSelfie_StartVeri, 
+       ROUND(SUM(IF(t.verification_confirmed_timestamp_max IS NULL AND t.confirmed_selfie_timestamp_max IS NOT NULL,1,0))/SUM(IF(t.confirmed_selfie_timestamp_max IS NOT NULL, 1,0)),2) AS dfrate_VeriConfirm_ConfirmSelfie,
+       ROUND(SUM(IF(t.dr_enters_timestamp IS NULL AND t.verification_confirmed_timestamp_max IS NOT NULL,1,0))/SUM(IF(t.verification_confirmed_timestamp_max IS NOT NULL, 1,0)),2) AS dfrate_DrEnters_VeriConfirm,
+       ROUND(SUM(IF(t.patient_response_timestamp IS NULL AND t.dr_enters_timestamp IS NOT NULL,1,0))/SUM(IF(t.dr_enters_timestamp IS NOT NULL, 1,0)),2) AS dfrate_PatientResp_DrEnters
+FROM t
+
+Question 3：
+WITH t as 
+(SELECT * FROM 
+      (SELECT DISTINCT encounter_id, user_id, platform,
+             min(saw_verification_timestamp) as saw_veri, max(start_veritifcation_timestamp) as start_veri, 
+             max(confirmed_selfie_timestamp) as confirmed_selfie, max(verification_confirmed_timestamp) as veri_confirmed              
+      FROM `curai-patientidverify.aa.id_verification`
+      WHERE encounter_id <> 'Encounter:144711' AND encounter_id <> 'Encounter:145059' AND encounter_id <> 'Encounter:150532' AND encounter_id <> 'Encounter:150831'
+      GROUP BY encounter_id, user_id, platform
+      ORDER BY encounter_id) AS t1
+LEFT JOIN `curai-patientidverify.aa.doctor_enters` AS t2 ON t1.encounter_id = t2.encounter_id
+LEFT JOIN `curai-patientidverify.aa.first_patient_response` AS t3 on t1.encounter_id = t3.encounter_id),
+t4 as
+(SELECT *,
+       TIMESTAMP_DIFF(start_veri, saw_veri, second) as SecondDiff_StartVeri_SawVeri,
+       TIMESTAMP_DIFF(confirmed_selfie, start_veri, second) as SecondDiff_Confirm_StartVeri,
+       TIMESTAMP_DIFF(veri_confirmed, confirmed_selfie, second) as SecondDiff_Veri_Confirm,
+       TIMESTAMP_DIFF(dr_enters_timestamp, veri_confirmed, second) as SecondDiff_DrEnter_Veri,
+       TIMESTAMP_DIFF(patient_response_timestamp, dr_enters_timestamp, second) as SecondDiff_PatientResponse_DrEnter
+FROM t),
+t5 as 
+(
+SELECT user_id, platform,StartVeri_SawVeri,
+       row_number() over(order by StartVeri_SawVeri) as rnk1,
+       row_number() over(order by StartVeri_SawVeri DESC) as rnk2
+FROM
+        (SELECT DISTINCT user_id, platform,
+                ifnull(null, avg(SecondDiff_PatientResponse_DrEnter)) as StartVeri_SawVeri   
+        FROM t4
+        GROUP BY user_id, platform)
+WHERE StartVeri_SawVeri>0
+),
+t6 as 
+(
+SELECT *,
+       row_number() over(partition by platform order by StartVeri_SawVeri) as rnk3,
+       row_number() over(partition by platform order by StartVeri_SawVeri DESC) as rnk4
+FROM
+        (SELECT DISTINCT user_id, platform,
+                ifnull(null, avg(SecondDiff_PatientResponse_DrEnter)) as StartVeri_SawVeri
+        FROM t4
+        GROUP BY user_id, platform)
+WHERE StartVeri_SawVeri>0
+)
+
+-- SELECT avg(StartVeri_SawVeri) as median
+-- FROM t5
+-- where (abs(rnk1-rnk2)=1 or rnk1=rnk2)
+-- SELECT * FROM t5
+
+SELECT t6.platform, avg(StartVeri_SawVeri) as median
+FROM t6
+where abs(rnk3-rnk4)=1 or abs(rnk3-rnk4)=2 or rnk3=rnk4
+GROUP BY t6.platform
