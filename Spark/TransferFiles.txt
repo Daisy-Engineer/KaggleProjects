@@ -1,0 +1,2 @@
+Information on how to transfer files back and forth to the virtual machine can be found：
+https://docs.google.com/document/d/1MZ_rNxJhR4HCU1qJ2-w7xlk2MTHVqa9lnl_uj-zRkzk/pub
